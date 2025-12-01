@@ -1,0 +1,26 @@
+# --- config.yaml ---
+
+# 系统设置
+system:
+  # 当前任务目标: "yellow", "red", "blue" (C# 修改这里来控制识别对象)
+  current_task: "yellow"
+  
+  save_root: "./saved_images"
+  # 是否在运行过程中弹窗显示结果 (生产环境建议 false)
+  show_window: false
+
+# 颜色参数配置
+colors:
+  yellow:
+    lower: [69, 39, 154]
+    upper: [90, 255, 255]
+    save_folder: "yellow_results"
+    draw_color: [0, 255, 255]
+    
+  red:
+    lower1: [0, 43, 46]
+    upper1: [10, 255, 255]
+    lower2: [156, 43, 46]
+    upper2: [180, 255, 255]
+    save_folder: "red_results"
+    draw_color: [0, 0, 255]
