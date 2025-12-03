@@ -109,7 +109,7 @@ def run_detection_once(image, cfg):
     if detected and best_cnt is not None:
         rect = cv2.minAreaRect(best_cnt)
         box = cv2.boxPoints(rect)
-        box = np.int0(box)
+        box = np.intp(box)
 
         cx_float, cy_float = rect[0]
         cx = int(cx_float)

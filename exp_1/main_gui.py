@@ -1,7 +1,6 @@
 import sys
 import cv2
 import yaml
-import time
 import threading
 import numpy as np
 import tkinter as tk
