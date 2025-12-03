@@ -1,17 +1,17 @@
 system:
-  current_task: red
+  current_task: yellow
   save_root: ./saved_images
   show_window: false
 colors:
   yellow:
     lower:
-    - 73
-    - 35
-    - 71
+    - 78
+    - 49
+    - 103
     upper:
     - 111
-    - 131
-    - 225
+    - 255
+    - 224
     save_folder: yellow_results
     draw_color:
     - 0
