@@ -5,13 +5,13 @@ system:
 colors:
   yellow:
     lower:
-    - 78
+    - 51
     - 49
-    - 103
+    - 53
     upper:
-    - 111
-    - 255
-    - 224
+    - 107
+    - 128
+    - 233
     save_folder: yellow_results
     draw_color:
     - 0
