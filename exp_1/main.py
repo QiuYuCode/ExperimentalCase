@@ -14,11 +14,10 @@ sys.path.append(str(root_path))
 try:
     from common import Camera
 except ImportError:
-    # print 输出会被 C# 捕获，以 ERROR: 开头方便 C# 判断
     print("ERROR: 找不到 common 模块")
     sys.exit(1)
 
-# --- 2. 配置加载 ---
+# --- 2. 配置加载 (保持不变) ---
 class ConfigManager:
     def __init__(self, config_path):
         self.config = self.load_config(config_path)
@@ -31,12 +30,11 @@ class ConfigManager:
         with open(path, 'r', encoding='utf-8') as f:
             cfg = yaml.safe_load(f)
 
-        # 预处理 numpy 数组
         for color_name, params in cfg['colors'].items():
             if 'lower' in params:
                 params['lower'] = np.array(params['lower'], dtype=np.uint8)
                 params['upper'] = np.array(params['upper'], dtype=np.uint8)
-            if 'lower1' in params: # 红色双区间
+            if 'lower1' in params: 
                 params['lower1'] = np.array(params['lower1'], dtype=np.uint8)
                 params['upper1'] = np.array(params['upper1'], dtype=np.uint8)
                 params['lower2'] = np.array(params['lower2'], dtype=np.uint8)
@@ -52,19 +50,21 @@ def fix_iccp_warning(image):
     return cv2.imdecode(encoded_img, cv2.IMREAD_COLOR)
 
 def run_detection_once(image, cfg):
-    """执行一次检测并保存"""
-    mode = cfg['system']['current_task'] # 从配置读取当前任务
+    """
+    执行一次检测并保存
+    返回: (save_path_str, center_x, center_y)
+    """
+    mode = cfg['system']['current_task']
     colors = cfg['colors']
 
     if mode not in colors:
-        print(f"ERROR: 未知的任务模式 '{mode}'，请检查 yaml 配置")
-        return None
+        print(f"ERROR: 未知的任务模式 '{mode}'")
+        return None, 0, 0
 
     param = colors[mode]
     image_draw = image.copy()
     hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
 
-    # 1. 生成掩膜
     if 'lower1' in param:
         mask1 = cv2.inRange(hsv, param['lower1'], param['upper1'])
         mask2 = cv2.inRange(hsv, param['lower2'], param['upper2'])
@@ -72,7 +72,6 @@ def run_detection_once(image, cfg):
     else:
         mask = cv2.inRange(hsv, param['lower'], param['upper'])
 
-    # 2. 查找轮廓
     kernel = np.ones((5, 5), np.uint8)
     mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -83,26 +82,51 @@ def run_detection_once(image, cfg):
 
     for cnt in contours:
         area = cv2.contourArea(cnt)
-        if area > 1500: # 面积阈值
+        if area > 1500:
             if area > max_area:
                 max_area = area
                 best_cnt = cnt
                 detected = True
 
     save_path_str = ""
+    cx, cy = 0, 0
     
-    # 3. 如果识别成功，画图并保存
     if detected and best_cnt is not None:
-        x, y, w, h = cv2.boundingRect(best_cnt)
-        cv2.rectangle(image_draw, (x, y), (x + w, y + h), param['draw_color'], 3)
-        cv2.putText(image_draw, f"{mode.upper()}", (x, y - 10), 
+        # --- 【关键修改 1】获取最小外接旋转矩形 ---
+        # rect 是一个 tuple: ((center_x, center_y), (width, height), angle)
+        rect = cv2.minAreaRect(best_cnt)
+        
+        # 获取矩形的四个顶点坐标，用于绘制
+        box = cv2.boxPoints(rect)
+        # 将坐标转换为整数
+        box = np.int0(box)
+
+        # --- 【关键修改 2】计算中心点 ---
+        # minAreaRect 直接返回了精确的中心点坐标 (浮点数)
+        cx_float, cy_float = rect[0]
+        cx = int(cx_float)
+        cy = int(cy_float)
+        
+        # --- 【关键修改 3】绘制旋转矩形和中心点 ---
+        # 使用 drawContours 来绘制旋转矩形（因为 box 是四个点的集合）
+        cv2.drawContours(image_draw, [box], 0, param['draw_color'], 3)
+        
+        # 画中心十字准星
+        cv2.drawMarker(image_draw, (cx, cy), param['draw_color'], cv2.MARKER_CROSS, 20, 3)
+        # 在中心点旁边写上坐标值
+        cv2.putText(image_draw, f"({cx},{cy})", (cx + 15, cy), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, param['draw_color'], 2)
+        
+        # 为了找一个合适的位置写模式名称，我们取四个顶点中 y 值最小的点（最上面的点）
+        # 并在它的上方写字
+        top_point = min(box, key=lambda p: p[1])
+        cv2.putText(image_draw, f"{mode.upper()}", (top_point[0], top_point[1] - 10), 
                     cv2.FONT_HERSHEY_SIMPLEX, 0.8, param['draw_color'], 2)
 
-        # 构造路径
         save_root = Path(cfg['system']['save_root'])
         sub_folder = param['save_folder']
         save_dir = save_root / sub_folder
-        save_dir.mkdir(parents=True, exist_ok=True) # 自动创建文件夹
+        save_dir.mkdir(parents=True, exist_ok=True)
 
         filename = f"{mode}.jpg"
         save_full_path = save_dir / filename
@@ -110,58 +134,46 @@ def run_detection_once(image, cfg):
         cv2.imwrite(str(save_full_path), image_draw)
         save_path_str = str(save_full_path)
     else:
-        # 如果没识别到，也可以选择保存一张原图，或者留空
         save_path_str = "NOT_FOUND"
 
-    # 4. 可选：弹窗显示 (调试用)
     if cfg['system']['show_window']:
         cv2.imshow("Result", image_draw)
-        cv2.waitKey(2000) # 显示 2 秒后自动关闭
+        cv2.waitKey(2000)
         cv2.destroyAllWindows()
 
-    return save_path_str
+    return save_path_str, cx, cy
 
-# --- 4. 主入口 ---
+# --- 4. 主入口 (保持不变) ---
 def main():
-    # 1. 读取配置
     config_path = exp_dir / "config.yaml"
     cfg_mgr = ConfigManager(config_path)
     
-    # 2. 初始化相机
     hkki_camera = None
     try:
         hkki_camera = Camera.Camera()
-        # ⚠️ 重要：海康相机刚启动第一帧可能是黑的或正在自动曝光
-        # 建议稍微等一下，或者丢弃前几帧
         time.sleep(0.5) 
     except Exception as e:
         print(f"ERROR: 相机启动失败 - {e}")
         sys.exit(1)
 
     try:
-        # 3. 抓拍一张图片
         raw_image = hkki_camera.getCameraData()
-        
         if raw_image is None:
             print("ERROR: 取图失败 (Empty Frame)")
             sys.exit(1)
 
         image = fix_iccp_warning(raw_image)
 
-        # 4. 识别并处理
-        result_path = run_detection_once(image, cfg_mgr.config)
+        result_path, center_x, center_y = run_detection_once(image, cfg_mgr.config)
 
-        # 5. 【关键】输出结果给 C#
-        # C# 读取 Console.ReadLine() 就能拿到这个路径
         if result_path and result_path != "NOT_FOUND":
-            print(f"SUCCESS|{result_path}")
+            print(f"SUCCESS|{result_path}|{center_x}|{center_y}")
         else:
-            print("SUCCESS|NOT_FOUND")
+            print("SUCCESS|NOT_FOUND|0|0")
 
     except Exception as e:
         print(f"ERROR: 处理过程异常 - {e}")
     finally:
-        # 6. 必须关闭相机
         if hasattr(hkki_camera, 'CloseCamera'):
             hkki_camera.CloseCamera()
 
