@@ -104,8 +104,7 @@ def run_detection_once(image, cfg):
         save_dir = save_root / sub_folder
         save_dir.mkdir(parents=True, exist_ok=True) # 自动创建文件夹
 
-        timestamp = time.strftime("%Y%m%d_%H%M%S")
-        filename = f"{mode}_{timestamp}.jpg"
+        filename = f"{mode}.jpg"
         save_full_path = save_dir / filename
         
         cv2.imwrite(str(save_full_path), image_draw)
