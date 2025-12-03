@@ -1,0 +1,12 @@
+[project]
+name = "experimentalcase"
+version = "0.1.0"
+description = "海康相机案例库"
+readme = "README.md"
+requires-python = ">=3.8"
+dependencies = [
+    "numpy>=2.0.2",
+    "opencv-python>=4.11.0.86",
+    "pillow>=11.3.0",
+    "pyyaml>=6.0.3",
+]

@@ -1,0 +1,41 @@
+system:
+  current_task: yellow
+  save_root: ./saved_images
+  show_window: false
+colors:
+  yellow:
+    lower:
+    - 51
+    - 49
+    - 53
+    upper:
+    - 107
+    - 128
+    - 233
+    save_folder: yellow_results
+    draw_color:
+    - 0
+    - 0
+    - 255
+  red:
+    lower1:
+    - 0
+    - 43
+    - 46
+    upper1:
+    - 10
+    - 255
+    - 255
+    lower2:
+    - 119
+    - 63
+    - 79
+    upper2:
+    - 169
+    - 158
+    - 255
+    save_folder: red_results
+    draw_color:
+    - 0
+    - 255
+    - 0

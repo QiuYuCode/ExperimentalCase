@@ -1,6 +1,7 @@
 # -- coding: utf-8 --
 
 import sys
+from pathlib import Path
 import copy
 import ctypes
 
@@ -11,7 +12,10 @@ from CameraParams_const import *
 from CameraParams_header import *
 from MvErrorDefine_const import *
 
-MvCamCtrldll = WinDLL("D:/实验案例/实验二-相机打开和获取图像/Python/dll/MvCameraControl.dll")
+current_file_path = Path(__file__).resolve()
+dll_path = current_file_path.parent.parent / "dll/MvCameraControl.dll"
+
+MvCamCtrldll = WinDLL(str(dll_path))
 
 # 用于回调函数传入相机实例
 class _MV_PY_OBJECT_(Structure):
