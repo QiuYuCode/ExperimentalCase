@@ -137,17 +137,23 @@ camera.close()
 
 项目配置中内置了以下颜色检测：
 
-| 颜色 | HSV 下限 | HSV 上限 | 用途 |
-|------|---------|---------|------|
-| 黄色 | [51, 49, 53] | [107, 128, 233] | 黄色物体识别 |
-| 红色 | 两个区间 | 两个区间 | 红色物体识别（跨越HSV边界） |
+| 颜色 | HSV 范围 | 绘制颜色 | 保存文件夹 | 说明 |
+|------|---------|--------|----------|------|
+| 黄色 | L:[51,49,53]<br/>U:[107,128,233] | [0,0,255] 红色 | yellow_results | 单区间检测 |
+| 红色 | L1:[0,43,46] U1:[10,255,255]<br/>L2:[119,63,79] U2:[169,158,255] | [0,255,0] 绿色 | red_results | 双区间检测（跨越HSV边界） |
 
-可根据实际需求调整参数。
+**参数说明：**
+- **HSV 范围**：[H, S, V]，H 范围 0-180，S 和 V 范围 0-255（OpenCV标准）
+- **绘制颜色**：BGR 格式 [B, G, R]，用于在结果图上标注检测目标
+- **双区间**：红色在 HSV 空间中跨越 H=180 的边界，因此需要两个区间分别检测
+
+可根据实际光照和物体条件调整参数。
 
 ## 📝 使用示例
 
 ### 基本的颜色检测流程
 
+**示例 1：单区间检测（黄色）**
 ```python
 import cv2
 from pathlib import Path
@@ -167,19 +173,42 @@ frame = camera.get_frame()
 # HSV 转换
 hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
 
-# 颜色分割
-lower = tuple(config['colors']['yellow']['lower'])
-upper = tuple(config['colors']['yellow']['upper'])
+# 颜色分割（黄色）
+yellow_cfg = config['colors']['yellow']
+lower = tuple(yellow_cfg['lower'])
+upper = tuple(yellow_cfg['upper'])
 mask = cv2.inRange(hsv, lower, upper)
 
 # 查找轮廓
 contours, _ = cv2.findContours(mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
 
 # 绘制结果
-cv2.drawContours(frame, contours, -1, (0, 0, 255), 2)
-cv2.imshow('Result', frame)
+draw_color = tuple(yellow_cfg['draw_color'])
+cv2.drawContours(frame, contours, -1, draw_color, 2)
+cv2.imshow('Yellow Detection', frame)
 
 camera.close()
+```
+
+**示例 2：双区间检测（红色）**
+```python
+# 颜色分割（红色 - 需要两个区间）
+red_cfg = config['colors']['red']
+lower1 = tuple(red_cfg['lower1'])
+upper1 = tuple(red_cfg['upper1'])
+lower2 = tuple(red_cfg['lower2'])
+upper2 = tuple(red_cfg['upper2'])
+
+# 两个范围的掩码进行 OR 操作
+mask1 = cv2.inRange(hsv, lower1, upper1)
+mask2 = cv2.inRange(hsv, lower2, upper2)
+mask = cv2.bitwise_or(mask1, mask2)
+
+# 后续处理同上
+contours, _ = cv2.findContours(mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+draw_color = tuple(red_cfg['draw_color'])
+cv2.drawContours(frame, contours, -1, draw_color, 2)
+cv2.imshow('Red Detection', frame)
 ```
 
 ## 🛠️ 常见问题
