@@ -133,7 +133,7 @@ class ModernApp(tk.Tk):
         self.destroy()
 
 # =============================================================================
-#  页面 1: 智能识别 (保留原功能)
+#  页面 1: 智能识别
 # =============================================================================
 class DetectionPage(tk.Frame):
     def __init__(self, parent, app_controller):
@@ -196,7 +196,7 @@ class DetectionPage(tk.Frame):
         self.img_label.image = tk_img
 
 # =============================================================================
-#  页面 2: 参数调试 (保留原功能)
+#  页面 2: 参数调试
 # =============================================================================
 class TuningPage(tk.Frame):
     def __init__(self, parent, app_controller):
@@ -374,7 +374,7 @@ class TuningPage(tk.Frame):
             messagebox.showerror("保存失败", str(e))
 
 # =============================================================================
-#  页面 3: 尺寸标定 (【新增】核心功能)
+#  页面 3: 尺寸标定
 # =============================================================================
 class CalibrationPage(tk.Frame):
     def __init__(self, parent, app_controller):
@@ -496,7 +496,18 @@ class CalibrationPage(tk.Frame):
                 self.points = [] # 重置
                 self.show_image()
 
-if __name__ == "__main__":
+def gui_entry():
+    """这是供 Launcher 调用的 GUI 入口"""
+    
+    if getattr(sys, 'frozen', False):
+        import os
+        exe_dir = Path(sys.executable).parent
+        os.chdir(exe_dir) 
+
     app = ModernApp()
     app.protocol("WM_DELETE_WINDOW", app.on_close)
     app.mainloop()
+
+# --- 保持独立运行能力 ---
+if __name__ == "__main__":
+    gui_entry()

@@ -225,3 +225,7 @@ $RECYCLE.BIN/
 
 saved_images/
 .vscode/
+out/
+OutPut/
+main.build/
+main.dist/
