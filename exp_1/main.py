@@ -3,7 +3,7 @@ import time
 import yaml
 import cv2
 import numpy as np
-import math  # 需要导入 math 库计算角度
+import math
 from pathlib import Path
 
 # --- 1. 路径设置 ---
@@ -31,7 +31,6 @@ class ConfigManager:
         with open(path, 'r', encoding='utf-8') as f:
             cfg = yaml.safe_load(f)
 
-        # 预处理 numpy 数组
         for color_name, params in cfg['colors'].items():
             if 'lower' in params:
                 params['lower'] = np.array(params['lower'], dtype=np.uint8)
@@ -56,65 +55,51 @@ def ensure_numpy(val):
         return np.array(val, dtype=np.uint8)
     return val
 
-# --- 【新增】绘制旋转文字的辅助函数 ---
 def draw_rotated_text(img, text, center, angle, color, scale, thickness):
-    """
-    在图像上绘制旋转的文字
-    """
     font = cv2.FONT_HERSHEY_SIMPLEX
-    # 1. 获取文字大小
     text_size, baseline = cv2.getTextSize(text, font, scale, thickness)
     w, h = text_size
-    
-    # 2. 创建一个足够大的临时画布 (为了容纳旋转后的文字)
-    # 画布大小设为文字宽度的1.5倍，确保旋转不出界
     canvas_w = int(w * 1.5) + 20
     canvas_h = int(w * 1.5) + 20
-    
-    # 创建纯黑背景画布
     canvas = np.zeros((canvas_h, canvas_w, 3), dtype=np.uint8)
     
-    # 3. 在画布中心绘制文字
     tx = (canvas_w - w) // 2
-    ty = (canvas_h + h) // 2a
+    ty = (canvas_h + h) // 2
     cv2.putText(canvas, text, (tx, ty), font, scale, color, thickness)
     
-    # 4. 计算旋转矩阵 (围绕画布中心旋转)
     M = cv2.getRotationMatrix2D((canvas_w // 2, canvas_h // 2), angle, 1.0)
-    
-    # 5. 旋转画布
     rotated_canvas = cv2.warpAffine(canvas, M, (canvas_w, canvas_h))
     
-    # 6. 将旋转后的文字融合到原图上
-    # 计算原图上的粘贴位置 (以 center 为中心)
     x_start = int(center[0] - canvas_w // 2)
     y_start = int(center[1] - canvas_h // 2)
     x_end = x_start + canvas_w
     y_end = y_start + canvas_h
     
-    # 边界检查，防止越界
     if x_start < 0 or y_start < 0 or x_end > img.shape[1] or y_end > img.shape[0]:
-        return # 如果文字出界就不画了，防止报错
+        return
 
-    # 提取 ROI (感兴趣区域)
     roi = img[y_start:y_end, x_start:x_end]
-    
-    # 创建掩膜：只有文字部分是白色的
     img2gray = cv2.cvtColor(rotated_canvas, cv2.COLOR_BGR2GRAY)
     _, mask = cv2.threshold(img2gray, 1, 255, cv2.THRESH_BINARY)
     mask_inv = cv2.bitwise_not(mask)
     
-    # 抠图与融合
-    img_bg = cv2.bitwise_and(roi, roi, mask=mask_inv) # 原图背景
-    img_fg = cv2.bitwise_and(rotated_canvas, rotated_canvas, mask=mask) # 文字前景
+    img_bg = cv2.bitwise_and(roi, roi, mask=mask_inv)
+    img_fg = cv2.bitwise_and(rotated_canvas, rotated_canvas, mask=mask)
     dst = cv2.add(img_bg, img_fg)
-    
-    # 放回原图
     img[y_start:y_end, x_start:x_end] = dst
 
 def run_detection_once(image, cfg):
+    """
+    执行一次检测并保存
+    返回: (save_path_str, real_len, real_wid)
+    """
     mode = cfg['system']['current_task']
     colors = cfg['colors']
+
+    # 初始化变量，防止报错
+    real_len = 0.0
+    real_wid = 0.0
+    save_path_str = "NOT_FOUND"
 
     if mode not in colors:
         print(f"ERROR: 未知的任务模式 '{mode}'")
@@ -124,7 +109,6 @@ def run_detection_once(image, cfg):
     image_draw = image.copy()
     hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
 
-    # 掩膜处理
     if 'lower1' in param:
         l1 = ensure_numpy(param['lower1']); u1 = ensure_numpy(param['upper1'])
         l2 = ensure_numpy(param['lower2']); u2 = ensure_numpy(param['upper2'])
@@ -149,8 +133,6 @@ def run_detection_once(image, cfg):
                 best_cnt = cnt
                 detected = True
 
-    save_path_str = ""
-    cx, cy = 0, 0
     draw_color = tuple(param.get('draw_color', [0, 255, 0]))
     
     if detected and best_cnt is not None:
@@ -158,6 +140,7 @@ def run_detection_once(image, cfg):
         box = cv2.boxPoints(rect)
         box = np.intp(box)
 
+        # 仅用于计算偏移方向，不返回
         cx_float, cy_float = rect[0]
         cx = int(cx_float)
         cy = int(cy_float)
@@ -172,11 +155,9 @@ def run_detection_once(image, cfg):
         real_len = pixel_len / scale
         real_wid = pixel_wid / scale
 
-        # 绘图
+        # 绘图 (不再画中心十字)
         cv2.drawContours(image_draw, [box], 0, draw_color, 3)
-        cv2.drawMarker(image_draw, (cx, cy), draw_color, cv2.MARKER_CROSS, 20, 3)
 
-        # --- 【关键修改：计算角度并绘制旋转文字，且向外偏移】 ---
         drawn_len = False
         drawn_wid = False
 
@@ -188,43 +169,32 @@ def run_detection_once(image, cfg):
             mid_x = int((p1[0] + p2[0]) / 2)
             mid_y = int((p1[1] + p2[1]) / 2)
             
-            # --- 新增：计算向外偏移后的文字中心点 ---
-            # 1. 计算从矩形中心指向边中点的向量
+            # 计算文字位置
             vec_x = mid_x - cx
             vec_y = mid_y - cy
-            
-            # 2. 归一化向量 (得到指向外侧的单位方向向量)
             vec_len = math.sqrt(vec_x**2 + vec_y**2)
-            if vec_len < 1e-3: vec_len = 1 # 防止除零
+            if vec_len < 1e-3: vec_len = 1
             norm_x = vec_x / vec_len
             norm_y = vec_y / vec_len
             
-            # 3. 向外偏移一定距离 (例如 35 像素，可根据需要调整)
             shift_dist = 35 
             text_cx = int(mid_x + norm_x * shift_dist)
             text_cy = int(mid_y + norm_y * shift_dist)
             text_center = (text_cx, text_cy)
-            # ------------------------------------
 
-            # 计算边的角度
             angle_rad = math.atan2(p2[1] - p1[1], p2[0] - p1[0])
             angle_deg = angle_rad * 180 / math.pi
-            
-            # 调整角度，保证文字便于阅读
             text_angle = angle_deg
             if text_angle < -90: text_angle += 180
             elif text_angle > 90: text_angle -= 180
             
-            # 判断这条边是"长"还是"宽"
             if not drawn_len and abs(edge_len - pixel_len) < 10:
-                text = f"H:{real_len:.1f}"
-                # 使用计算出的新的、向外偏移的中心点
+                text = f"L:{real_len:.1f}"
                 draw_rotated_text(image_draw, text, text_center, text_angle, draw_color, 0.6, 2)
                 drawn_len = True
 
             elif not drawn_wid and abs(edge_len - pixel_wid) < 10:
                 text = f"W:{real_wid:.1f}"
-                # 使用计算出的新的、向外偏移的中心点
                 draw_rotated_text(image_draw, text, text_center, text_angle, draw_color, 0.6, 2)
                 drawn_wid = True
 
@@ -243,15 +213,15 @@ def run_detection_once(image, cfg):
         save_full_path = save_dir / filename
         cv2.imwrite(str(save_full_path), image_draw)
         save_path_str = str(save_full_path)
-    else:
-        save_path_str = "NOT_FOUND"
-
+    
     if cfg['system']['show_window']:
         cv2.imshow("Result", image_draw)
         cv2.waitKey(2000)
         cv2.destroyAllWindows()
 
-    return save_path_str, cx, cy
+    # 返回: 路径, 长, 宽 (共3个值)
+    return save_path_str, real_len, real_wid
+
 # --- 4. 主入口 ---
 def main():
     config_path = exp_dir / "config.yaml"
@@ -272,10 +242,11 @@ def main():
             sys.exit(1)
 
         image = fix_iccp_warning(raw_image)
-        result_path, center_x, center_y = run_detection_once(image, cfg_mgr.config)
+        # 接收 3 个返回值
+        result_path, length, width = run_detection_once(image, cfg_mgr.config)
 
         if result_path and result_path != "NOT_FOUND":
-            print(f"SUCCESS|{result_path}|{center_x}|{center_y}")
+            print(f"SUCCESS|{result_path}|{length:.1f}|{width:.1f}")
         else:
             print("SUCCESS|NOT_FOUND|0|0")
 
