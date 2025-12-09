@@ -1,14 +1,16 @@
 import sys
 import cv2
 import yaml
+import time
+import math
 import threading
 import numpy as np
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk, messagebox, simpledialog
 from PIL import Image, ImageTk
 from pathlib import Path
 
-# --- 路径设置 ---
+# --- 1. 路径设置 ---
 current_file_path = Path(__file__).resolve()
 exp_dir = current_file_path.parent
 root_path = current_file_path.parent.parent
@@ -35,7 +37,7 @@ COLORS = {
 class ModernApp(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("工业视觉一体化工作站")
+        self.title("工业视觉一体化工作站 (完整版)")
         screen_w = self.winfo_screenwidth()
         screen_h = self.winfo_screenheight()
         try: self.state('zoomed')
@@ -45,6 +47,7 @@ class ModernApp(tk.Tk):
         self.config_data = {}
         self.load_config()
         self.camera_status_var = tk.StringVar(value="正在连接相机...")
+        
         self.setup_layout()
         threading.Thread(target=self.connect_camera_thread, daemon=True).start()
 
@@ -61,12 +64,15 @@ class ModernApp(tk.Tk):
             raw = self.camera.getCameraData()
             if raw is not None: self.camera_status_var.set("相机已连接")
             else: self.camera_status_var.set("相机连接成功但无数据")
+            # 通知各页面相机就绪
             self.page_detect.update_camera_status(True)
             self.page_tune.update_camera_status(True)
+            self.page_calib.update_camera_status(True)
         except Exception as e:
             self.camera_status_var.set(f"相机连接失败: {e}")
 
     def setup_layout(self):
+        # 1. 侧边栏
         self.sidebar = tk.Frame(self, bg=COLORS["bg_dark"], width=200)
         self.sidebar.pack(side=tk.LEFT, fill=tk.Y)
         self.sidebar.pack_propagate(False)
@@ -74,17 +80,23 @@ class ModernApp(tk.Tk):
         tk.Label(self.sidebar, text="VISION\nSYSTEM", bg=COLORS["bg_dark"], 
                  fg=COLORS["text_light"], font=("Arial", 20, "bold"), pady=30).pack(side=tk.TOP)
 
+        # 导航按钮
         self.create_nav_btn("🔍 智能识别", self.show_detection_page)
         self.create_nav_btn("⚙️ 参数调试", self.show_tuning_page)
+        self.create_nav_btn("📏 尺寸标定", self.show_calibration_page) # 新增按钮
         
         tk.Label(self.sidebar, textvariable=self.camera_status_var, 
                  bg=COLORS["bg_dark"], fg="#95a5a6", wraplength=180, justify="center").pack(side=tk.BOTTOM, pady=20)
 
+        # 2. 内容区
         self.content_area = tk.Frame(self, bg=COLORS["bg_light"])
         self.content_area.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
 
+        # 3. 初始化所有子页面
         self.page_detect = DetectionPage(self.content_area, self)
         self.page_tune = TuningPage(self.content_area, self)
+        self.page_calib = CalibrationPage(self.content_area, self) # 新增页面
+        
         self.show_detection_page()
 
     def create_nav_btn(self, text, command):
@@ -96,20 +108,33 @@ class ModernApp(tk.Tk):
         btn.bind("<Leave>", lambda e: btn.config(bg=COLORS["bg_dark"]))
 
     def show_detection_page(self):
-        self.page_tune.pack_forget()
+        self.hide_all_pages()
         self.page_detect.pack(fill=tk.BOTH, expand=True)
-        self.load_config()
+        self.load_config() # 重新加载配置，确保标定参数生效
         self.page_detect.refresh_buttons()
 
     def show_tuning_page(self):
-        self.page_detect.pack_forget()
+        self.hide_all_pages()
         self.page_tune.pack(fill=tk.BOTH, expand=True)
         self.page_tune.grab_live_frame()
+
+    def show_calibration_page(self):
+        self.hide_all_pages()
+        self.page_calib.pack(fill=tk.BOTH, expand=True)
+        self.page_calib.grab_live_frame()
+
+    def hide_all_pages(self):
+        self.page_detect.pack_forget()
+        self.page_tune.pack_forget()
+        self.page_calib.pack_forget()
 
     def on_close(self):
         if self.camera and hasattr(self.camera, 'CloseCamera'): self.camera.CloseCamera()
         self.destroy()
 
+# =============================================================================
+#  页面 1: 智能识别
+# =============================================================================
 class DetectionPage(tk.Frame):
     def __init__(self, parent, app_controller):
         super().__init__(parent, bg=COLORS["bg_light"])
@@ -147,6 +172,7 @@ class DetectionPage(tk.Frame):
             return
         image = fix_iccp_warning(raw_img)
         self.app.config_data['system']['current_task'] = task_mode
+        # 调用 main.py 里的函数 (它会自动读取 config 里的 pixels_per_mm)
         path, cx, cy = run_detection_once(image, self.app.config_data)
         if path and path != "NOT_FOUND":
             self.lbl_result.config(text=f"成功: {task_mode} ({cx}, {cy})", fg="green")
@@ -170,14 +196,13 @@ class DetectionPage(tk.Frame):
         self.img_label.image = tk_img
 
 # =============================================================================
-#  页面 2: 参数调试 (修复保存任务逻辑 + 增加自动加载参数功能)
+#  页面 2: 参数调试
 # =============================================================================
 class TuningPage(tk.Frame):
     def __init__(self, parent, app_controller):
         super().__init__(parent, bg=COLORS["bg_light"])
         self.app = app_controller
         self.current_img = None
-        # 初始化变量
         self.h_min = tk.IntVar(); self.h_max = tk.IntVar(value=180)
         self.s_min = tk.IntVar(); self.s_max = tk.IntVar(value=255)
         self.v_min = tk.IntVar(); self.v_max = tk.IntVar(value=255)
@@ -186,50 +211,38 @@ class TuningPage(tk.Frame):
     def setup_ui(self):
         self.columnconfigure(0, weight=3)
         self.columnconfigure(1, weight=1)
-
-        # 左侧：图片
         img_container = tk.Frame(self, bg="black")
         img_container.grid(row=0, column=0, sticky="nsew", padx=10, pady=10)
         self.canvas = tk.Canvas(img_container, bg="#222", cursor="cross")
         self.canvas.pack(fill=tk.BOTH, expand=True)
         self.canvas.bind("<Button-1>", self.on_click_image)
         
-        # 右侧：控制面板
         ctrl_panel = tk.Frame(self, bg="white")
         ctrl_panel.grid(row=0, column=1, sticky="nsew", padx=(0, 10), pady=10)
         
-        # 标题栏
         header = tk.Frame(ctrl_panel, bg="white")
         header.pack(fill=tk.X, pady=10, padx=10)
         tk.Label(header, text="HSV 参数调节", font=("bold", 14), bg="white").pack(side=tk.LEFT)
         ttk.Button(header, text="❓ 调试指南", command=self.show_help_window).pack(side=tk.RIGHT)
-        
         ttk.Button(ctrl_panel, text="📸 重新抓拍图像", command=self.grab_live_frame).pack(fill=tk.X, padx=10, pady=5)
         
-        # 滑块
-        self.create_slider(ctrl_panel, "H Min (颜色起点)", self.h_min, 0, 180, "调整颜色的起始范围")
-        self.create_slider(ctrl_panel, "H Max (颜色终点)", self.h_max, 0, 180, "调整颜色的结束范围")
+        self.create_slider(ctrl_panel, "H Min (颜色起点)", self.h_min, 0, 180, "调整颜色起始范围")
+        self.create_slider(ctrl_panel, "H Max (颜色终点)", self.h_max, 0, 180, "调整颜色结束范围")
         ttk.Separator(ctrl_panel, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=5)
-        self.create_slider(ctrl_panel, "S Min (去白/去灰)", self.s_min, 0, 255, "调高此值可过滤白色/灰色背景")
+        self.create_slider(ctrl_panel, "S Min (去白/去灰)", self.s_min, 0, 255, "调高过滤白色/灰色背景")
         self.create_slider(ctrl_panel, "S Max (饱和度上限)", self.s_max, 0, 255, "通常保持 255")
         ttk.Separator(ctrl_panel, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=5)
-        self.create_slider(ctrl_panel, "V Min (去黑/去影)", self.v_min, 0, 255, "调高此值可过滤黑色背景/阴影")
+        self.create_slider(ctrl_panel, "V Min (去黑/去影)", self.v_min, 0, 255, "调高过滤黑色背景/阴影")
         self.create_slider(ctrl_panel, "V Max (亮度上限)", self.v_max, 0, 255, "通常保持 255")
 
-        # 保存区
         ttk.Separator(ctrl_panel, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=15)
         tk.Label(ctrl_panel, text="保存至配置文件:", bg="white").pack(pady=5)
-        
         self.combo_target = ttk.Combobox(ctrl_panel, state="readonly")
         self.combo_target.pack(fill=tk.X, padx=10)
+        self.combo_target.bind("<Button-1>", self.refresh_target_list)
+        self.combo_target.bind("<<ComboboxSelected>>", self.load_target_params)
+        ttk.Button(ctrl_panel, text="💾 保存参数", command=self.save_config).pack(fill=tk.X, padx=10, pady=10)
         
-        # 事件绑定
-        self.combo_target.bind("<Button-1>", self.refresh_target_list)      # 点击时刷新列表
-        self.combo_target.bind("<<ComboboxSelected>>", self.load_target_params) # 【新增】选中时加载已有参数
-        
-        ttk.Button(ctrl_panel, text="💾 保存参数 (并设为当前任务)", command=self.save_config).pack(fill=tk.X, padx=10, pady=10)
-        
-        # 预览图
         self.lbl_preview = tk.Label(ctrl_panel, text="处理结果预览 (黑色=过滤，彩色=保留)", bg="white", fg="gray")
         self.lbl_preview.pack(side=tk.BOTTOM, pady=5)
         self.panel_res = tk.Label(ctrl_panel, bg="#eee")
@@ -257,7 +270,6 @@ class TuningPage(tk.Frame):
         lbl.pack(fill=tk.BOTH, expand=True)
 
     def update_camera_status(self, is_ready): pass
-
     def grab_live_frame(self):
         if not self.app.camera: return
         raw = self.app.camera.getCameraData()
@@ -269,16 +281,13 @@ class TuningPage(tk.Frame):
         if self.current_img is None: return
         lower = np.array([self.h_min.get(), self.s_min.get(), self.v_min.get()])
         upper = np.array([self.h_max.get(), self.s_max.get(), self.v_max.get()])
-        
         hsv = cv2.cvtColor(self.current_img, cv2.COLOR_BGR2HSV)
         mask = cv2.inRange(hsv, lower, upper)
         res = cv2.bitwise_and(self.current_img, self.current_img, mask=mask)
-        
         colored_mask = np.zeros_like(self.current_img)
         colored_mask[:,:] = [0, 0, 255] 
         masked_overlay = cv2.bitwise_and(colored_mask, colored_mask, mask=mask)
         display_main = cv2.addWeighted(self.current_img, 1, masked_overlay, 0.5, 0)
-        
         self.show_image(display_main, self.canvas)
         self.show_image(res, self.panel_res, is_preview=True)
 
@@ -295,7 +304,6 @@ class TuningPage(tk.Frame):
         new_w, new_h = int(w*scale), int(h*scale)
         img_rgb = cv2.cvtColor(cv2.resize(cv_img, (new_w, new_h)), cv2.COLOR_BGR2RGB)
         tk_img = ImageTk.PhotoImage(image=Image.fromarray(img_rgb))
-        
         if isinstance(widget, tk.Canvas):
             widget.delete("all")
             cx, cy = win_w//2, win_h//2
@@ -321,7 +329,6 @@ class TuningPage(tk.Frame):
             self.update_view()
 
     def refresh_target_list(self, event=None):
-        """刷新下拉框列表"""
         targets = []
         for k, v in self.app.config_data.get('colors', {}).items():
             if 'lower' in v: targets.append(k)
@@ -330,26 +337,17 @@ class TuningPage(tk.Frame):
         self.combo_target['values'] = targets
 
     def load_target_params(self, event=None):
-        """【新增】当选择目标时，自动加载该目标的现有参数到滑块"""
         target = self.combo_target.get()
         if not target: return
-        
-        # 解析颜色键和区间后缀
         color_key = target.split(" (")[0]
         suffix = ""
         if "区间" in target: suffix = target.split("区间")[1].replace(")", "")
         key_l, key_u = f"lower{suffix}", f"upper{suffix}"
-        
-        # 从配置中读取并设置滑块
         try:
             params = self.app.config_data['colors'][color_key]
-            l = params[key_l] # 期望是 [h, s, v]
-            u = params[key_u]
-            
+            l = params[key_l]; u = params[key_u]
             self.h_min.set(l[0]); self.s_min.set(l[1]); self.v_min.set(l[2])
             self.h_max.set(u[0]); self.s_max.set(u[1]); self.v_max.set(u[2])
-            
-            # 立即刷新视图
             self.update_view()
         except Exception as e:
             print(f"加载参数失败: {e}")
@@ -359,34 +357,157 @@ class TuningPage(tk.Frame):
         if not target:
             messagebox.showwarning("提示", "请选择保存目标")
             return
-        
-        # 获取滑块值
         lower = [self.h_min.get(), self.s_min.get(), self.v_min.get()]
         upper = [self.h_max.get(), self.s_max.get(), self.v_max.get()]
-        
-        # 解析目标
         color_key = target.split(" (")[0]
         suffix = ""
         if "区间" in target: suffix = target.split("区间")[1].replace(")", "")
         key_l, key_u = f"lower{suffix}", f"upper{suffix}"
-        
-        # 1. 更新内存中的颜色参数
         self.app.config_data['colors'][color_key][key_l] = lower
         self.app.config_data['colors'][color_key][key_u] = upper
-        
-        # 2. 【核心修复】同时更新 system.current_task
-        # 这样识别程序就知道现在主要关注的是哪个颜色
         self.app.config_data['system']['current_task'] = color_key
-        
         try:
             with open(config_path, 'w', encoding='utf-8') as f:
                 yaml.dump(self.app.config_data, f, allow_unicode=True, sort_keys=False)
             messagebox.showinfo("成功", f"已保存 {target} 参数\n并已将其设为当前检测任务！")
         except Exception as e:
             messagebox.showerror("保存失败", str(e))
+
+# =============================================================================
+#  页面 3: 尺寸标定
+# =============================================================================
+class CalibrationPage(tk.Frame):
+    def __init__(self, parent, app_controller):
+        super().__init__(parent, bg=COLORS["bg_light"])
+        self.app = app_controller
+        self.current_img = None
+        self.points = [] # 存储点击的点
+        self.img_scale = 1.0
+        self.img_offset = (0, 0)
+        self.setup_ui()
+
+    def setup_ui(self):
+        # 顶部说明栏
+        header = tk.Frame(self, bg="white", height=60)
+        header.pack(side=tk.TOP, fill=tk.X, padx=20, pady=20)
+        tk.Label(header, text="尺寸标定", font=("bold", 14), bg="white").pack(side=tk.LEFT, padx=10)
+        tk.Label(header, text="请按照提示依次点击图片中的两点", bg="white", fg="gray").pack(side=tk.LEFT, padx=20)
+        
+        self.btn_reset = ttk.Button(header, text="🔄 重置/重新抓拍", command=self.grab_live_frame)
+        self.btn_reset.pack(side=tk.RIGHT, padx=10)
+
+        # 图片区
+        self.canvas = tk.Canvas(self, bg="#222", cursor="crosshair")
+        self.canvas.pack(fill=tk.BOTH, expand=True, padx=20, pady=(0, 20))
+        self.canvas.bind("<Button-1>", self.on_click)
+
+    def update_camera_status(self, is_ready): pass
+
+    def grab_live_frame(self):
+        if not self.app.camera: return
+        raw = self.app.camera.getCameraData()
+        if raw is not None:
+            self.current_img = fix_iccp_warning(raw)
+            self.points = [] # 清空点
+            self.show_image()
+
+    def show_image(self):
+        if self.current_img is None: return
+        # 复制一份用于画图
+        display_img = self.current_img.copy()
+        
+        # 绘制已点击的点
+        for pt in self.points:
+            cv2.circle(display_img, pt, 15, (0, 0, 255), -1)
+        
+        # 如果有两个点，画线
+        if len(self.points) == 2:
+            cv2.line(display_img, self.points[0], self.points[1], (0, 255, 0), 5)
+
+        # 缩放显示
+        h, w = display_img.shape[:2]
+        win_w = self.winfo_width()
+        win_h = self.winfo_height()
+        if win_w < 10: win_w = 800; win_h = 600
+        
+        scale = min(win_w/w, win_h/h)
+        new_w, new_h = int(w*scale), int(h*scale)
+        img_rgb = cv2.cvtColor(cv2.resize(display_img, (new_w, new_h)), cv2.COLOR_BGR2RGB)
+        tk_img = ImageTk.PhotoImage(image=Image.fromarray(img_rgb))
+        
+        self.canvas.delete("all")
+        cx, cy = win_w//2, win_h//2
+        self.canvas.create_image(cx, cy, anchor=tk.CENTER, image=tk_img)
+        self.canvas.image = tk_img
+        
+        self.img_scale = scale
+        self.img_offset = (cx - new_w//2, cy - new_h//2)
+
+    def on_click(self, event):
+        if self.current_img is None: return
+        if len(self.points) >= 2: return # 只要两个点
+
+        ox, oy = self.img_offset
+        ix = int((event.x - ox) / self.img_scale)
+        iy = int((event.y - oy) / self.img_scale)
+        
+        # 边界检查
+        if 0 <= ix < self.current_img.shape[1] and 0 <= iy < self.current_img.shape[0]:
+            self.points.append((ix, iy))
+            self.show_image()
             
-            
-if __name__ == "__main__":
+            # 如果点满两个，开始计算
+            if len(self.points) == 2:
+                self.calculate_ratio()
+
+    def calculate_ratio(self):
+        p1 = self.points[0]
+        p2 = self.points[1]
+        
+        # 像素距离
+        pixel_dist = math.sqrt((p1[0]-p2[0])**2 + (p1[1]-p2[1])**2)
+        
+        # 弹窗输入实际距离
+        real_dist_str = simpledialog.askstring("输入尺寸", 
+                                             f"两点间像素距离: {pixel_dist:.2f}\n"
+                                             f"请输入这两点代表的实际长度 (mm):")
+        
+        if real_dist_str:
+            try:
+                real_dist = float(real_dist_str)
+                if real_dist <= 0: raise ValueError
+                
+                # 计算系数
+                pixels_per_mm = pixel_dist / real_dist
+                
+                # 更新配置
+                self.app.config_data['system']['pixels_per_mm'] = float(f"{pixels_per_mm:.2f}")
+                
+                # 写入文件
+                with open(config_path, 'w', encoding='utf-8') as f:
+                    yaml.dump(self.app.config_data, f, allow_unicode=True, sort_keys=False)
+                
+                messagebox.showinfo("标定成功", 
+                                  f"系数已更新: {pixels_per_mm:.2f} 像素/mm\n"
+                                  f"您可以切换回【智能识别】页查看效果了。")
+                                  
+            except ValueError:
+                messagebox.showerror("错误", "请输入有效的数字！")
+                self.points = [] # 重置
+                self.show_image()
+
+def gui_entry():
+    """这是供 Launcher 调用的 GUI 入口"""
+    
+    if getattr(sys, 'frozen', False):
+        import os
+        exe_dir = Path(sys.executable).parent
+        os.chdir(exe_dir) 
+
     app = ModernApp()
     app.protocol("WM_DELETE_WINDOW", app.on_close)
     app.mainloop()
+
+# --- 保持独立运行能力 ---
+if __name__ == "__main__":
+    gui_entry()
