@@ -5,8 +5,13 @@ description = "海康相机案例库"
 readme = "README.md"
 requires-python = ">=3.8"
 dependencies = [
-    "numpy>=2.0.2",
-    "opencv-python>=4.11.0.86",
-    "pillow>=11.3.0",
+    "numpy==1.24",
+    "opencv-python>=4.8.1.78",
+    "pillow>=10.4.0",
     "pyyaml>=6.0.3",
+]
+
+[dependency-groups]
+dev = [
+    "nuitka>=2.8.9",
 ]

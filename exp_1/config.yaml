@@ -2,6 +2,7 @@ system:
   current_task: yellow
   save_root: ./saved_images
   show_window: false
+  pixels_per_mm: 12.1
 colors:
   yellow:
     lower:
