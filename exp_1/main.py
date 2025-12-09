@@ -101,18 +101,8 @@ def draw_rotated_text(img, text, center, angle, color, scale, thickness):
     
     img[y1:y2, x1:x2] = dst
 
-def run_detection_once(image, cfg):
-    mode = cfg['system']['current_task']
-    colors = cfg['colors']
-
-    if mode not in colors:
-        print(f"ERROR: 未知的任务模式 '{mode}'")
-        return None, 0, 0
-
-    param = colors[mode]
-    image_draw = image.copy()
-    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
-
+def detect_single_color(image, hsv, color_name, param):
+    """检测单一颜色，返回 (面积, 轮廓, 颜色名, 参数)"""
     if 'lower1' in param:
         l1 = ensure_numpy(param['lower1']); u1 = ensure_numpy(param['upper1'])
         l2 = ensure_numpy(param['lower2']); u2 = ensure_numpy(param['upper2'])
@@ -125,96 +115,110 @@ def run_detection_once(image, cfg):
     mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-    detected = False
     max_area = 0
     best_cnt = None
-
     for cnt in contours:
         area = cv2.contourArea(cnt)
-        if area > 1500:
-            if area > max_area:
-                max_area = area
-                best_cnt = cnt
-                detected = True
+        if area > 1500 and area > max_area:
+            max_area = area
+            best_cnt = cnt
 
+    return max_area, best_cnt, color_name, param
+
+
+def run_detection_once(image, cfg, mode=None):
+    """
+    执行颜色检测。
+    mode=None 时自动识别所有颜色中面积最大的目标；
+    mode='yellow'/'red'/... 时仅检测指定颜色。
+    """
+    colors = cfg['colors']
+    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+
+    if mode is not None:
+        # 指定颜色模式
+        if mode not in colors:
+            print(f"ERROR: 未知的任务模式 '{mode}'")
+            return None, None
+        candidates = [(mode, colors[mode])]
+    else:
+        # 自动识别模式：遍历所有颜色
+        candidates = list(colors.items())
+
+    # 对所有候选颜色进行检测，找出面积最大的
+    best_result = (0, None, None, None)  # (面积, 轮廓, 颜色名, 参数)
+    for color_name, param in candidates:
+        result = detect_single_color(image, hsv, color_name, param)
+        if result[0] > best_result[0]:
+            best_result = result
+
+    max_area, best_cnt, detected_color, param = best_result
+    detected = best_cnt is not None
+
+    image_draw = image.copy()
     save_path_str = ""
-    cx, cy = 0, 0
-    draw_color = tuple(map(int, param.get('draw_color', [0, 255, 0])))
+    draw_color = tuple(map(int, param.get('draw_color', [0, 255, 0]))) if param else (0, 255, 0)
     
     if detected and best_cnt is not None:
+        mode = detected_color  # 使用检测到的颜色名
         rect = cv2.minAreaRect(best_cnt)
         box = cv2.boxPoints(rect)
         box = np.int0(box)
 
-        cx_float, cy_float = rect[0]
-        cx = int(cx_float)
-        cy = int(cy_float)
+        cx, cy = int(rect[0][0]), int(rect[0][1])
         
+        # 计算长宽 (像素 -> mm)
         dim1, dim2 = rect[1]
         pixel_len = max(dim1, dim2)
         pixel_wid = min(dim1, dim2)
-        
         scale = cfg['system'].get('pixels_per_mm', 1.0)
         if scale <= 0: scale = 1.0
         real_len = pixel_len / scale
         real_wid = pixel_wid / scale
 
-        # 绘图
+        # 绘图：矩形框 + 中心标记
         cv2.drawContours(image_draw, [box], 0, draw_color, 3)
         cv2.drawMarker(image_draw, (cx, cy), draw_color, cv2.MARKER_CROSS, 20, 3)
 
-        # 绘制长宽文字
+        # 绘制长宽文字 (沿边旋转)
         drawn_len = False
         drawn_wid = False
-
         for i in range(4):
             p1 = box[i]
             p2 = box[(i + 1) % 4]
-
             edge_len = np.linalg.norm(p1 - p2)
             mid_x = int((p1[0] + p2[0]) / 2)
             mid_y = int((p1[1] + p2[1]) / 2)
             
-            vec_x = mid_x - cx
-            vec_y = mid_y - cy
+            # 计算文字位置：向外偏移
+            vec_x, vec_y = mid_x - cx, mid_y - cy
             vec_len = math.sqrt(vec_x**2 + vec_y**2)
             if vec_len < 1e-3: vec_len = 1
-            norm_x = vec_x / vec_len
-            norm_y = vec_y / vec_len
+            shift_dist = 40
+            text_cx = int(mid_x + vec_x / vec_len * shift_dist)
+            text_cy = int(mid_y + vec_y / vec_len * shift_dist)
             
-            shift_dist = 40 
-            text_cx = int(mid_x + norm_x * shift_dist)
-            text_cy = int(mid_y + norm_y * shift_dist)
-            text_center = (text_cx, text_cy)
-
+            # 计算旋转角度
             angle_rad = math.atan2(p2[1] - p1[1], p2[0] - p1[0])
-            angle_deg = angle_rad * 180 / math.pi
-            text_angle = angle_deg
+            text_angle = angle_rad * 180 / math.pi
             if text_angle < -90: text_angle += 180
             elif text_angle > 90: text_angle -= 180
             
             if not drawn_len and abs(edge_len - pixel_len) < 10:
-                text = f"L:{real_len:.1f}"
-                draw_rotated_text(image_draw, text, text_center, text_angle, draw_color, 0.7, 2)
+                draw_rotated_text(image_draw, f"L:{real_len:.1f}", (text_cx, text_cy), text_angle, draw_color, 0.7, 2)
                 drawn_len = True
-
             elif not drawn_wid and abs(edge_len - pixel_wid) < 10:
-                text = f"W:{real_wid:.1f}"
-                draw_rotated_text(image_draw, text, text_center, text_angle, draw_color, 0.7, 2)
+                draw_rotated_text(image_draw, f"W:{real_wid:.1f}", (text_cx, text_cy), text_angle, draw_color, 0.7, 2)
                 drawn_wid = True
 
-        # --- 【修复】绘制颜色标签 (YELLOW/RED) ---
-        # 找到矩形最高的顶点 (Y值最小的点)
+        # 绘制颜色标签 (YELLOW/RED)
         top_point = min(box, key=lambda p: p[1])
-        # 计算文字位置：在最高点上方 30 像素
-        # max(40, ...) 确保文字不会画到图片外面去
         label_x = top_point[0] - 20
         label_y = max(40, top_point[1] - 20)
-        
         cv2.putText(image_draw, mode.upper(), (label_x, label_y), 
                     cv2.FONT_HERSHEY_SIMPLEX, 1.0, draw_color, 2)
 
-        # 保存图片 (文件名无时间戳)
+        # 保存图片
         raw_root = cfg['system']['save_root']
         if raw_root.startswith("."):
             save_root = (exp_dir / raw_root).resolve()
@@ -230,15 +234,13 @@ def run_detection_once(image, cfg):
         
         cv2.imwrite(str(save_full_path), image_draw)
         save_path_str = str(save_full_path)
-    else:
-        save_path_str = "NOT_FOUND"
 
     if cfg['system']['show_window']:
         cv2.imshow("Result", image_draw)
         cv2.waitKey(2000)
         cv2.destroyAllWindows()
 
-    return save_path_str, cx, cy
+    return save_path_str, detected_color if detected else None
 
 # --- 4. 主入口 ---
 def main_entry():
@@ -279,13 +281,13 @@ def main_entry():
 
         image = fix_iccp_warning(raw_image)
 
-        # 传入配置对象
-        result_path, center_x, center_y = run_detection_once(image, cfg_mgr.config)
+        # 传入配置对象，mode=None 表示自动识别颜色
+        result_path, detected_color = run_detection_once(image, cfg_mgr.config, mode=None)
 
-        if result_path and result_path != "NOT_FOUND":
-            print(f"SUCCESS|{result_path}|{center_x}|{center_y}")
+        if result_path:
+            print(f"SUCCESS|{result_path}")
         else:
-            print("SUCCESS|NOT_FOUND|0|0")
+            print("NOT_FOUND|")
 
     except Exception as e:
         print(f"ERROR: 处理过程异常 - {e}")

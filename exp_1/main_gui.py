@@ -1,7 +1,6 @@
 import sys
 import cv2
 import yaml
-import time
 import math
 import threading
 import numpy as np
@@ -154,6 +153,10 @@ class DetectionPage(tk.Frame):
 
     def refresh_buttons(self):
         for widget in self.btn_container.winfo_children(): widget.destroy()
+        # 自动识别按钮（优先位置）
+        ttk.Button(self.btn_container, text="🔍 自动识别", 
+                   command=lambda: self.perform_detection(None)).pack(side=tk.LEFT, padx=5)
+        # 各颜色按钮
         colors = self.app.config_data.get('colors', {}).keys()
         for color in colors:
             ttk.Button(self.btn_container, text=f"检测 {color.upper()}", 
@@ -163,6 +166,9 @@ class DetectionPage(tk.Frame):
         if is_ready: self.img_label.config(text="相机就绪，请选择任务")
 
     def perform_detection(self, task_mode):
+        """
+        执行检测。task_mode=None 时自动识别颜色，否则检测指定颜色。
+        """
         if not self.app.camera:
             messagebox.showwarning("警告", "相机尚未连接")
             return
@@ -171,15 +177,16 @@ class DetectionPage(tk.Frame):
             self.lbl_result.config(text="取图失败", fg="red")
             return
         image = fix_iccp_warning(raw_img)
-        self.app.config_data['system']['current_task'] = task_mode
-        # 调用 main.py 里的函数 (它会自动读取 config 里的 pixels_per_mm)
-        path, cx, cy = run_detection_once(image, self.app.config_data)
-        if path and path != "NOT_FOUND":
-            self.lbl_result.config(text=f"成功: {task_mode} ({cx}, {cy})", fg="green")
+        # 调用 main.py 里的函数，mode 参数控制检测模式
+        path, detected_color = run_detection_once(image, self.app.config_data, mode=task_mode)
+        if path:
+            display_name = detected_color.upper() if detected_color else "目标"
+            self.lbl_result.config(text=f"成功: {display_name}", fg="green")
             res_img = cv2.imread(path)
             if res_img is not None: self.display_image(res_img)
         else:
-            self.lbl_result.config(text=f"未找到 {task_mode}", fg="#e67e22")
+            hint = task_mode.upper() if task_mode else "任何颜色目标"
+            self.lbl_result.config(text=f"未找到 {hint}", fg="#e67e22")
             self.display_image(image)
 
     def display_image(self, cv_img):
@@ -365,11 +372,10 @@ class TuningPage(tk.Frame):
         key_l, key_u = f"lower{suffix}", f"upper{suffix}"
         self.app.config_data['colors'][color_key][key_l] = lower
         self.app.config_data['colors'][color_key][key_u] = upper
-        self.app.config_data['system']['current_task'] = color_key
         try:
             with open(config_path, 'w', encoding='utf-8') as f:
                 yaml.dump(self.app.config_data, f, allow_unicode=True, sort_keys=False)
-            messagebox.showinfo("成功", f"已保存 {target} 参数\n并已将其设为当前检测任务！")
+            messagebox.showinfo("成功", f"已保存 {target} 参数！")
         except Exception as e:
             messagebox.showerror("保存失败", str(e))
 
