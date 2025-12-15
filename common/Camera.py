@@ -3,10 +3,15 @@
 import sys
 import os
 import time
+import logging
 from pathlib import Path
 from ctypes import *
 import numpy as np
 import cv2 as cv
+
+# --- 日志配置 (默认只显示 CRITICAL 级别) ---
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.CRITICAL)  # 默认只显示 CRITICAL 级别日志
 
 # --- 1. 路径修复优化 ---
 # 获取当前脚本的绝对路径 (D:\ExperimentalCase\common)
@@ -16,14 +21,14 @@ dll_path = current_dir / "MvImport"
 
 # 检查路径是否存在
 if not dll_path.exists():
-    print(f"Error: SDK路径不存在 -> {dll_path}")
+    logger.error(f"SDK路径不存在 -> {dll_path}")
 else:
     sys.path.append(str(dll_path))
 
 try:
     from MvCameraControl_class import *
 except ImportError:
-    print("错误：无法导入 MvCameraControl_class，请检查 MvImport 文件夹位置。")
+    logger.error("无法导入 MvCameraControl_class，请检查 MvImport 文件夹位置。")
     sys.exit()
 
 class Camera:
@@ -36,7 +41,7 @@ class Camera:
         self.buf_cache = None # 用于缓存数据 buffer
         self.is_open = False  # 标记相机是否正常打开
 
-        print("正在初始化相机...")
+        logger.info("正在初始化相机...")
         self._connect_and_start()
 
     def _connect_and_start(self):
@@ -47,26 +52,26 @@ class Camera:
         # 1. 枚举设备
         ret = MvCamera.MV_CC_EnumDevices(tlayerType, deviceList)
         if ret != 0:
-            print(f"枚举设备失败! ret[0x{ret:x}]")
+            logger.error(f"枚举设备失败! ret[0x{ret:x}]")
             return
 
         if deviceList.nDeviceNum == 0:
-            print("未发现任何相机设备！")
+            logger.debug("未发现任何相机设备！")
             return
 
-        print(f"发现 {deviceList.nDeviceNum} 个设备，默认连接第 [0] 个...")
+        logger.info(f"发现 {deviceList.nDeviceNum} 个设备，默认连接第 [0] 个...")
 
         # 2. 创建句柄 (自动选择索引 0)
         stDeviceList = cast(deviceList.pDeviceInfo[0], POINTER(MV_CC_DEVICE_INFO)).contents
         ret = self.cam.MV_CC_CreateHandle(stDeviceList)
         if ret != 0:
-            print(f"创建句柄失败! ret[0x{ret:x}]")
+            logger.error(f"创建句柄失败! ret[0x{ret:x}]")
             return
 
         # 3. 打开设备
         ret = self.cam.MV_CC_OpenDevice(MV_ACCESS_Exclusive, 0)
         if ret != 0:
-            print(f"打开设备失败! ret[0x{ret:x}]")
+            logger.error(f"打开设备失败! ret[0x{ret:x}]")
             return
         
         # 4. (GigE相机) 网络包大小探测
@@ -83,18 +88,18 @@ class Camera:
         memset(byref(stParam), 0, sizeof(MVCC_INTVALUE))
         ret = self.cam.MV_CC_GetIntValue("PayloadSize", stParam)
         if ret != 0:
-            print(f"获取 PayloadSize 失败! ret[0x{ret:x}]")
+            logger.error(f"获取 PayloadSize 失败! ret[0x{ret:x}]")
             return
         self.nPayloadSize = stParam.nCurValue
 
         # 7. 开始取流
         ret = self.cam.MV_CC_StartGrabbing()
         if ret != 0:
-            print(f"开始取流失败! ret[0x{ret:x}]")
+            logger.error(f"开始取流失败! ret[0x{ret:x}]")
             return
 
         self.is_open = True
-        print("相机初始化成功，正在连续取流中...")
+        logger.info("相机初始化成功，正在连续取流中...")
 
     # --- 图像转换辅助函数 (修复了参数 self 问题) ---
     def Mono_numpy(self, data, nWidth, nHeight):
@@ -137,7 +142,7 @@ class Camera:
         注意：现在这个函数非常快，因为它不需要重新连接相机。
         """
         if not self.is_open:
-            print("错误：相机未连接，无法获取图像")
+            logger.error("相机未连接，无法获取图像")
             return None
 
         pData = (c_ubyte * self.nPayloadSize)()
@@ -152,7 +157,7 @@ class Camera:
             #print(f"Get One Frame: Width[{stFrameInfo.nWidth}], Height[{stFrameInfo.nHeight}], Type[0x{stFrameInfo.enPixelType:x}]")
             return self._convert_image(pData, stFrameInfo)
         else:
-            print(f"获取图像超时或失败! ret[0x{ret:x}]")
+            logger.debug(f"获取图像超时或失败! ret[0x{ret:x}]")
             return None
 
     def _convert_image(self, pData, stFrameInfo):
@@ -193,7 +198,7 @@ class Camera:
             stConvertParam.nDstBufferSize = nConvertSize
             ret = self.cam.MV_CC_ConvertPixelType(stConvertParam)
             if ret != 0:
-                print("像素格式转换失败！")
+                logger.error("像素格式转换失败！")
                 return None
             return self.Color_numpy(self.buf_cache, stFrameInfo.nWidth, stFrameInfo.nHeight)
 
@@ -204,7 +209,7 @@ class Camera:
             self.cam.MV_CC_CloseDevice()
             self.cam.MV_CC_DestroyHandle()
             self.is_open = False
-            print("相机已关闭")
+            logger.info("相机已关闭")
 
     def __del__(self):
         """对象销毁时确保关闭"""
