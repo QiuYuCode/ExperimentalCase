@@ -49,16 +49,35 @@ ExperimentalCase/
 - Python >= 3.8
 - Windows 系统（海康 SDK 依赖）
 - 海康威视 GigE 或 USB 工业相机
+- [uv](https://github.com/astral-sh/uv)（推荐，用于快速依赖管理）
 
 ### 2. 安装依赖
 
+**方式一：使用 uv（推荐）**
+
+本项目使用 `uv` 进行依赖管理，提供更快的安装速度和更好的依赖解析。
+
 ```bash
-pip install -r requirements.txt
+# 安装 uv（如果尚未安装）
+# Windows (PowerShell)
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+# 或使用 pip
+pip install uv
+
+# 同步项目依赖（根据 pyproject.toml 和 uv.lock）
+uv sync
+
+# 或仅安装生产依赖（不包含开发依赖）
+uv sync --no-dev
 ```
 
-或直接安装所需包：
+**方式二：使用传统 pip**
 
 ```bash
+# 从 requirements.txt 安装（推荐）
+pip install -r requirements.txt
+
+# 或直接安装所需包
 pip install numpy>=2.0.2 opencv-python>=4.11.0.86 pillow>=11.3.0 pyyaml>=6.0.3
 ```
 
@@ -82,17 +101,29 @@ colors:
 
 ### 4. 运行程序
 
-**命令行版本（推荐）：**
+**方式一：使用 uv 运行（推荐）**
 ```bash
+# 命令行版本
 cd exp_1
-python main.py
+uv run python main.py
+
+# 图形界面版本
+cd exp_1
+uv run python main_gui.py
 ```
 
-**图形界面版本：**
+**方式二：直接使用 Python 运行（传统方式）**
 ```bash
+# 命令行版本
+cd exp_1
+python main.py
+
+# 图形界面版本
 cd exp_1
 python main_gui.py
 ```
+
+> **注意**：使用传统方式运行前，请确保已通过 `pip install -r requirements.txt` 或 `uv sync` 安装所有依赖。
 
 ## 🔧 功能说明
 
@@ -244,6 +275,51 @@ A: 检查以下项目：
 | pyyaml | >=6.0.3 | 配置文件解析 |
 
 海康 SDK：由 `MvImport` 文件夹提供
+
+## 🔨 uv 使用说明
+
+本项目使用 `uv` 作为包管理工具，提供更快的依赖安装和更好的版本锁定。
+
+### 常用命令
+
+```bash
+# 同步依赖（安装/更新所有依赖）
+uv sync
+
+# 添加新依赖
+uv add <package-name>
+
+# 添加开发依赖
+uv add --dev <package-name>
+
+# 移除依赖
+uv remove <package-name>
+
+# 更新依赖
+uv sync --upgrade
+
+# 运行 Python 脚本（自动使用项目环境）
+uv run python <script.py>
+
+# 生成 requirements.txt（用于兼容 pip）
+uv pip compile pyproject.toml -o requirements.txt
+
+# 查看已安装的包
+uv pip list
+```
+
+### 项目文件说明
+
+- `pyproject.toml` - 项目配置和依赖声明
+- `uv.lock` - 锁定的依赖版本（确保可重现的构建）
+- `requirements.txt` - 由 uv 自动生成，用于兼容传统 pip 工作流
+
+### 优势
+
+- **速度更快**：比 pip 快 10-100 倍
+- **依赖解析更可靠**：使用与 Cargo 相同的解析器
+- **版本锁定**：`uv.lock` 确保所有环境使用相同版本
+- **虚拟环境管理**：自动创建和管理虚拟环境
 
 ## 📄 许可证
 
