@@ -243,6 +243,11 @@ class TuningPage(tk.Frame):
         self.create_slider(ctrl_panel, "V Max (亮度上限)", self.v_max, 0, 255, "通常保持 255")
 
         ttk.Separator(ctrl_panel, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=15)
+        
+        # 添加新颜色功能
+        ttk.Button(ctrl_panel, text="➕ 添加新颜色", command=self.add_new_color).pack(fill=tk.X, padx=10, pady=5)
+        
+        ttk.Separator(ctrl_panel, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=10)
         tk.Label(ctrl_panel, text="保存至配置文件:", bg="white").pack(pady=5)
         self.combo_target = ttk.Combobox(ctrl_panel, state="readonly")
         self.combo_target.pack(fill=tk.X, padx=10)
@@ -358,6 +363,131 @@ class TuningPage(tk.Frame):
             self.update_view()
         except Exception as e:
             print(f"加载参数失败: {e}")
+
+    def add_new_color(self):
+        """添加新颜色对话框"""
+        if self.current_img is None:
+            messagebox.showwarning("提示", "请先抓拍一张图像，以便预览效果")
+            return
+        
+        # 创建对话框窗口
+        dialog = tk.Toplevel(self)
+        dialog.title("添加新颜色")
+        dialog.geometry("450x350")
+        dialog.config(bg="white")
+        dialog.transient(self)
+        dialog.grab_set()
+        
+        # 颜色名称
+        tk.Label(dialog, text="颜色名称:", bg="white", font=("微软雅黑", 10)).grid(row=0, column=0, sticky="w", padx=10, pady=10)
+        entry_name = tk.Entry(dialog, width=30, font=("微软雅黑", 10))
+        entry_name.grid(row=0, column=1, padx=10, pady=10)
+        entry_name.focus()
+        
+        # 保存文件夹名
+        tk.Label(dialog, text="保存文件夹:", bg="white", font=("微软雅黑", 10)).grid(row=1, column=0, sticky="w", padx=10, pady=10)
+        entry_folder = tk.Entry(dialog, width=30, font=("微软雅黑", 10))
+        entry_folder.grid(row=1, column=1, padx=10, pady=10)
+        
+        # 绘制颜色（BGR）
+        tk.Label(dialog, text="标注颜色 (B,G,R):", bg="white", font=("微软雅黑", 10)).grid(row=2, column=0, sticky="w", padx=10, pady=10)
+        color_frame = tk.Frame(dialog, bg="white")
+        color_frame.grid(row=2, column=1, padx=10, pady=10, sticky="w")
+        entry_b = tk.Entry(color_frame, width=5, font=("微软雅黑", 10))
+        entry_b.insert(0, "0")
+        entry_b.pack(side=tk.LEFT, padx=2)
+        tk.Label(color_frame, text=",", bg="white").pack(side=tk.LEFT)
+        entry_g = tk.Entry(color_frame, width=5, font=("微软雅黑", 10))
+        entry_g.insert(0, "255")
+        entry_g.pack(side=tk.LEFT, padx=2)
+        tk.Label(color_frame, text=",", bg="white").pack(side=tk.LEFT)
+        entry_r = tk.Entry(color_frame, width=5, font=("微软雅黑", 10))
+        entry_r.insert(0, "0")
+        entry_r.pack(side=tk.LEFT, padx=2)
+        tk.Label(color_frame, text=" (默认绿色)", bg="white", fg="gray", font=("微软雅黑", 8)).pack(side=tk.LEFT, padx=5)
+        
+        # 当前HSV参数显示
+        param_frame = tk.Frame(dialog, bg="white", relief=tk.GROOVE, bd=1)
+        param_frame.grid(row=3, column=0, columnspan=2, padx=10, pady=10, sticky="ew")
+        tk.Label(param_frame, text="当前HSV参数:", bg="white", font=("微软雅黑", 9, "bold")).pack(pady=5)
+        hsv_text = f"H: [{self.h_min.get()}, {self.h_max.get()}]  S: [{self.s_min.get()}, {self.s_max.get()}]  V: [{self.v_min.get()}, {self.v_max.get()}]"
+        tk.Label(param_frame, text=hsv_text, bg="white", font=("微软雅黑", 9)).pack(pady=5)
+        
+        # 提示信息
+        tip_text = "提示：\n1. 颜色名称将用于按钮显示和结果文件名\n2. 保存文件夹名建议使用小写字母和下划线\n3. 标注颜色为BGR格式，用于在结果图上标注检测目标"
+        tk.Label(dialog, text=tip_text, bg="white", fg="gray", font=("微软雅黑", 8), justify=tk.LEFT).grid(row=4, column=0, columnspan=2, padx=10, pady=10, sticky="w")
+        
+        def on_ok():
+            color_name = entry_name.get().strip()
+            save_folder = entry_folder.get().strip()
+            
+            if not color_name:
+                messagebox.showerror("错误", "请输入颜色名称")
+                return
+            
+            if not save_folder:
+                messagebox.showerror("错误", "请输入保存文件夹名")
+                return
+            
+            # 检查颜色名称是否已存在
+            if color_name in self.app.config_data.get('colors', {}):
+                if not messagebox.askyesno("确认", f"颜色 '{color_name}' 已存在，是否覆盖？"):
+                    return
+            
+            # 验证BGR颜色值
+            try:
+                b = int(entry_b.get())
+                g = int(entry_g.get())
+                r = int(entry_r.get())
+                if not (0 <= b <= 255 and 0 <= g <= 255 and 0 <= r <= 255):
+                    raise ValueError
+            except ValueError:
+                messagebox.showerror("错误", "标注颜色值必须在 0-255 之间")
+                return
+            
+            # 获取当前HSV参数
+            lower = [self.h_min.get(), self.s_min.get(), self.v_min.get()]
+            upper = [self.h_max.get(), self.s_max.get(), self.v_max.get()]
+            
+            # 创建新颜色配置
+            if 'colors' not in self.app.config_data:
+                self.app.config_data['colors'] = {}
+            
+            self.app.config_data['colors'][color_name] = {
+                'lower': lower,
+                'upper': upper,
+                'save_folder': save_folder,
+                'draw_color': [b, g, r]
+            }
+            
+            # 保存到文件
+            try:
+                with open(config_path, 'w', encoding='utf-8') as f:
+                    yaml.dump(self.app.config_data, f, allow_unicode=True, sort_keys=False)
+                
+                # 刷新相关UI
+                self.refresh_target_list()
+                self.app.load_config()  # 重新加载配置
+                if hasattr(self.app.page_detect, 'refresh_buttons'):
+                    self.app.page_detect.refresh_buttons()  # 刷新检测页面的按钮
+                
+                messagebox.showinfo("成功", f"已添加颜色 '{color_name}'！\n\n可以在【智能识别】页面看到新的检测按钮。")
+                dialog.destroy()
+            except Exception as e:
+                messagebox.showerror("保存失败", f"保存配置文件失败：{str(e)}")
+        
+        def on_cancel():
+            dialog.destroy()
+        
+        # 按钮
+        btn_frame = tk.Frame(dialog, bg="white")
+        btn_frame.grid(row=5, column=0, columnspan=2, pady=20)
+        ttk.Button(btn_frame, text="确定", command=on_ok, width=12).pack(side=tk.LEFT, padx=10)
+        ttk.Button(btn_frame, text="取消", command=on_cancel, width=12).pack(side=tk.LEFT, padx=10)
+        
+        # 绑定回车键
+        dialog.bind('<Return>', lambda e: on_ok())
+        dialog.bind('<Escape>', lambda e: on_cancel())
 
     def save_config(self):
         target = self.combo_target.get()
