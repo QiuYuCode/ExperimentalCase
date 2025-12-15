@@ -74,11 +74,11 @@ uv sync --no-dev
 **方式二：使用传统 pip**
 
 ```bash
-# 从 requirements.txt 安装（推荐）
+# 从 requirements.txt 安装（推荐，自动锁定版本）
 pip install -r requirements.txt
 
-# 或直接安装所需包
-pip install numpy>=2.0.2 opencv-python>=4.11.0.86 pillow>=11.3.0 pyyaml>=6.0.3
+# 或根据 pyproject.toml 直接安装所需包
+pip install "numpy==1.24" "opencv-python>=4.8.1.78" "pillow>=10.4.0" "pyyaml>=6.0.3"
 ```
 
 ### 3. 配置相机参数
@@ -267,14 +267,127 @@ A: 检查以下项目：
 
 ## 📦 依赖说明
 
-| 库 | 版本 | 用途 |
-|----|------|------|
-| numpy | >=2.0.2 | 数值计算 |
-| opencv-python | >=4.11.0.86 | 图像处理 |
-| pillow | >=11.3.0 | 图像 I/O |
-| pyyaml | >=6.0.3 | 配置文件解析 |
+### 生产依赖
 
-海康 SDK：由 `MvImport` 文件夹提供
+| 库 | 版本要求 | 当前锁定版本 | 用途 |
+|----|---------|------------|------|
+| numpy | ==1.24 | 1.24.0 | 数值计算 |
+| opencv-python | >=4.8.1.78 | 4.8.1.78 | 图像处理 |
+| pillow | >=10.4.0 | 11.3.0 | 图像 I/O |
+| pyyaml | >=6.0.3 | 6.0.3 | 配置文件解析 |
+
+### 开发依赖
+
+| 库 | 版本要求 | 用途 |
+|----|---------|------|
+| nuitka | >=2.8.9 | Python 代码编译打包 |
+
+### 其他依赖
+
+- **海康 SDK**：由 `common/MvImport/` 文件夹提供，包含相机控制相关的 Python 接口
+- **DLL 文件**：由 `common/dll/` 文件夹提供，包含海康 SDK 所需的动态链接库
+
+> **注意**：版本信息基于 `pyproject.toml` 和 `uv.lock`。实际安装的版本可能因依赖解析而略有不同，但会满足版本要求。
+
+## 📦 Nuitka 打包说明
+
+使用 Nuitka 将 Python 程序编译为独立的可执行文件，方便在没有 Python 环境的机器上运行。
+
+### 前置要求
+
+1. **安装 Nuitka**（已包含在开发依赖中）：
+```bash
+# 使用 uv 安装
+uv sync
+
+# 或使用 pip 安装
+pip install nuitka>=2.8.9
+```
+
+2. **安装 C 编译器**：
+   - **Windows**：安装 Visual Studio Build Tools 或 MinGW64（Nuitka 首次运行时会提示下载）
+   - **Linux**：`sudo apt-get install gcc`（Ubuntu/Debian）
+
+### 打包命令
+
+**打包命令行版本（main.py）：**
+```bash
+cd exp_1
+python -m nuitka \
+    --mode=standalone \
+    --output-dir=build \
+    --enable-plugin=opencv-python \
+    --include-module=common \
+    --include-module=common.Camera \
+    --include-module=common.MvImport \
+    --include-data-dir=../common/dll=common/dll \
+    --include-data-file=config.yaml=config.yaml \
+    --windows-icon-from-ico=VisionSystem.ico \
+    --product-name="ExperimentalCase" \
+    --file-version=0.1.0.0 \
+    --product-version=0.1.0 \
+    --file-description="海康相机颜色检测工具" \
+    main.py
+```
+
+**打包 GUI 版本（main_gui.py）：**
+```bash
+cd exp_1
+python -m nuitka \
+    --mode=standalone \
+    --output-dir=build \
+    --enable-plugin=opencv-python \
+    --enable-plugin=tk-inter \
+    --include-module=common \
+    --include-module=common.Camera \
+    --include-module=common.MvImport \
+    --include-data-dir=../common/dll=common/dll \
+    --include-data-file=config.yaml=config.yaml \
+    --windows-icon-from-ico=VisionSystem.ico \
+    --product-name="ExperimentalCase GUI" \
+    --file-version=0.1.0.0 \
+    --product-version=0.1.0 \
+    --file-description="海康相机颜色检测工具（图形界面）" \
+    main_gui.py
+```
+
+### 打包参数说明
+
+| 参数 | 说明 |
+|------|------|
+| `--mode=standalone` | 打包为独立文件夹，包含所有依赖 |
+| `--output-dir=build` | 输出目录 |
+| `--enable-plugin=opencv-python` | 启用 OpenCV 插件 |
+| `--enable-plugin=tk-inter` | 启用 Tkinter 插件（GUI 版本需要） |
+| `--include-module=common` | 包含 common 模块 |
+| `--include-data-dir=../common/dll=common/dll` | 包含 DLL 文件目录 |
+| `--include-data-file=config.yaml=config.yaml` | 包含配置文件 |
+| `--windows-icon-from-ico=VisionSystem.ico` | 设置 Windows 图标 |
+| `--product-name` | 产品名称（显示在文件属性中） |
+| `--file-version` | 文件版本号 |
+| `--product-version` | 产品版本号 |
+| `--file-description` | 文件描述 |
+
+### 打包输出
+
+打包后会生成 `build/main.dist/` 或 `build/main_gui.dist/` 文件夹，包含：
+- `main.exe` 或 `main_gui.exe`（可执行文件）
+- Python DLL 和所有依赖模块
+- `common/dll/` 目录（DLL 文件）
+- `config.yaml` 配置文件
+
+### 分发说明
+
+1. 将整个 `.dist` 文件夹复制到目标机器即可运行
+2. 确保 `config.yaml` 与可执行文件在同一目录
+3. DLL 文件已自动包含在 `.dist` 文件夹中
+
+### 注意事项
+
+- 打包前请确保程序在开发环境中能正常运行
+- 首次打包可能需要较长时间（需要下载依赖和编译）
+- 如果遇到模块缺失错误，使用 `--include-module=<模块名>` 手动包含
+- 将整个 `.dist` 文件夹复制到目标机器即可运行，无需安装 Python 环境
 
 ## 🔨 uv 使用说明
 
