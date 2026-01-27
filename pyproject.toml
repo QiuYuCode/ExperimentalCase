@@ -5,10 +5,14 @@ description = "海康相机案例库"
 readme = "README.md"
 requires-python = ">=3.8"
 dependencies = [
-    "numpy==1.24",
+    "fastapi>=0.109.0",
+    "numpy>=1.24.0",
     "opencv-python>=4.8.1.78",
     "pillow>=10.4.0",
+    "python-multipart>=0.0.6",
     "pyyaml>=6.0.3",
+    "uvicorn[standard]>=0.27.0",
+    "websockets>=12.0",
 ]
 
 [dependency-groups]
