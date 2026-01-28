@@ -101,6 +101,9 @@ async def detect_with_hsv(request: Dict[str, Any]) -> Dict[str, Any]:
         use_camera: 是否使用相机获取图像
     """
     global _current_camera
+
+    if _detector is None:
+        raise HTTPException(status_code=500, detail="检测器未初始化")
     
     image_base64 = request.get('image')  # 可选：从请求体获取图像
     

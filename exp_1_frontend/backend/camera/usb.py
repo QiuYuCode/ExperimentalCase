@@ -128,7 +128,12 @@ class USBCamera(CameraBase):
         devices = []
         for i in range(10):  # 检查前10个设备索引
             cap = cv2.VideoCapture(i)
-            if cap.isOpened():
-                devices.append(i)
-                cap.release()
+            try:
+                if cap.isOpened():
+                    devices.append(i)
+            finally:
+                try:
+                    cap.release()
+                except Exception:
+                    pass
         return devices

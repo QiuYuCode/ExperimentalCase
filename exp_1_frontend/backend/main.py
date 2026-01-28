@@ -7,10 +7,6 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 
-# 支持相对导入和绝对导入
-import sys
-from pathlib import Path
-
 # 确保backend目录的父目录在Python路径中（这样backend可以作为包导入）
 backend_dir = Path(__file__).resolve().parent
 parent_dir = backend_dir.parent
@@ -42,7 +38,8 @@ app = FastAPI(title="工业视觉检测系统 API", version="1.0.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],  # 生产环境应限制具体域名
-    allow_credentials=True,
+    # 注意：allow_origins=["*"] 时不能同时 allow_credentials=True（浏览器会拒绝）
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -57,18 +54,26 @@ app.include_router(config.router)
 async def startup_event():
     """应用启动时初始化"""
     # 确定配置文件路径
+    candidates = []
     if getattr(sys, 'frozen', False):
-        # 打包后的可执行文件
-        base_dir = Path(sys.executable).parent
+        exe_dir = Path(sys.executable).parent
+        candidates.extend([
+            exe_dir / "config.yaml",
+            exe_dir / "shared" / "config.yaml",
+        ])
     else:
-        # 开发模式
-        base_dir = Path(__file__).resolve().parent.parent.parent / "shared"
-    
-    config_path = base_dir / "config.yaml"
+        # 开发模式：exp_1_frontend/shared/config.yaml
+        candidates.extend([
+            backend_dir.parent / "shared" / "config.yaml",
+            # 兼容旧路径（若有人把shared放在仓库根）
+            backend_dir.parent.parent / "shared" / "config.yaml",
+        ])
+
+    config_path = next((p for p in candidates if p.exists()), candidates[0])
     
     # 如果配置文件不存在，尝试从exp_1目录复制
     if not config_path.exists():
-        exp1_config = Path(__file__).resolve().parent.parent.parent / "exp_1" / "config.yaml"
+        exp1_config = backend_dir.parent.parent / "exp_1" / "config.yaml"
         if exp1_config.exists():
             import shutil
             config_path.parent.mkdir(parents=True, exist_ok=True)

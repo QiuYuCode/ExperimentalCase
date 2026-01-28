@@ -1,6 +1,6 @@
 const { app, BrowserWindow, ipcMain } = require('electron');
 const path = require('path');
-const { spawn } = require('child_process');
+const { spawn, spawnSync } = require('child_process');
 const { PythonBridge } = require('./python-bridge');
 
 let mainWindow = null;
@@ -8,6 +8,22 @@ let pythonProcess = null;
 let pythonBridge = null;
 
 const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
+
+function commandExists(cmd, args = ['--version']) {
+  try {
+    const result = spawnSync(cmd, args, { stdio: 'ignore' });
+    return result.status === 0;
+  } catch {
+    return false;
+  }
+}
+
+function getPythonCommand() {
+  // Windows 通常是 python；Linux/macOS 通常是 python3
+  if (process.platform === 'win32') return 'python';
+  if (commandExists('python3', ['--version'])) return 'python3';
+  return 'python';
+}
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -39,14 +55,24 @@ function startPythonBackend() {
   const backendDir = path.join(__dirname, '../backend');
   
   if (isDev) {
-    // 开发模式：使用uv run运行backend/run.py
-    pythonProcess = spawn('uv', ['run', 'python', path.join(backendDir, 'run.py')], {
-      cwd: backendDir,
-      stdio: 'inherit',
-    });
+    // 开发模式：优先 uv；若不存在则回退到 python 直接运行 run.py
+    const runScript = path.join(backendDir, 'run.py');
+    if (commandExists('uv', ['--version'])) {
+      pythonProcess = spawn('uv', ['run', 'python', runScript], {
+        cwd: backendDir,
+        stdio: 'inherit',
+      });
+    } else {
+      const py = getPythonCommand();
+      pythonProcess = spawn(py, [runScript], {
+        cwd: backendDir,
+        stdio: 'inherit',
+      });
+    }
   } else {
     // 生产模式：使用打包后的Python可执行文件
-    const pythonExe = path.join(backendDir, 'dist', 'main.exe');
+    const exeName = process.platform === 'win32' ? 'main.exe' : 'main';
+    const pythonExe = path.join(backendDir, 'dist', exeName);
     pythonProcess = spawn(pythonExe, [], {
       cwd: backendDir,
       stdio: 'inherit',
