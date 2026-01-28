@@ -22,5 +22,5 @@ export const cameraAPI = {
   getFrame: () => apiClient.get('/api/camera/frame'),
 
   // 创建WebSocket图像流
-  createStream: () => apiClient.createWebSocket('/ws/camera/stream'),
+  createStream: () => apiClient.createWebSocket('/api/camera/stream'),
 };
